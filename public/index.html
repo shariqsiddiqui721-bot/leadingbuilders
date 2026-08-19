@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>ConstructFlow</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; background:#F6F4EE; font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; color:#26281f; }
+  button { font-family: inherit; }
+  input, select { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect, useCallback } = React;
+
+const API = "/api";
+const fmt = (n) => "Rs " + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+const today = () => new Date().toISOString().slice(0,10);
+
+const SECTIONS = [
+  { id:"owner", label:"Owner Ledger", sub:"Received & Due (Receivable)", color:"#1F4B43", entityNoun:"Owner / Party",
+    modes:[{key:"received",label:"Received from Owner"},{key:"due",label:"Due on Owner"}], balanceLabel:"Receivable Balance" },
+  { id:"labor", label:"Labor Ledger", sub:"Multiple labor heads", color:"#B5502A", entityNoun:"Labor Name",
+    modes:[{key:"wage",label:"Wage Due"},{key:"paid",label:"Paid to Labor"}], balanceLabel:"Balance Due to Labor" },
+  { id:"material", label:"Material Ledger", sub:"Material heads", color:"#8A6D1D", entityNoun:"Material Head",
+    modes:[{key:"used",label:"Material Used / Purchased"},{key:"paid",label:"Payment Made"}], balanceLabel:"Balance" },
+  { id:"supplier", label:"Supplier Payable", sub:"Supplier ledgers", color:"#3B4A6B", entityNoun:"Supplier Name",
+    modes:[{key:"bill",label:"Bill / Supply Received"},{key:"paid",label:"Paid to Supplier"}], balanceLabel:"Balance Payable" },
+];
+
+async function api(path, opts) {
+  const res = await fetch(API + path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  if (!res.ok) throw new Error("API error " + res.status);
+  return res.json();
+}
+
+function Header({ title, sub, onBack }) {
+  return (
+    <div style={S.header}>
+      {onBack && <button onClick={onBack} style={S.backBtn}>←</button>}
+      <div>
+        <div style={S.headerTitle}>{title}</div>
+        {sub && <div style={S.headerSub}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+function Empty({ text }) { return <div style={S.empty}>{text}</div>; }
+
+function SimpleModal({ title, onClose, children }) {
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.modal} onClick={e=>e.stopPropagation()}>
+        <div style={S.modalHead}>
+          <div style={S.modalTitle}>{title}</div>
+          <button onClick={onClose} style={S.closeBtn}>✕</button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Root App ----------
+function App() {
+  const [projects, setProjects] = useState(null);
+  const [activeProject, setActiveProject] = useState(null);
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [err, setErr] = useState("");
+
+  const loadProjects = useCallback(async () => {
+    try { setProjects(await api("/projects")); }
+    catch(e){ setErr("Could not connect to server."); }
+  }, []);
+
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  if (activeProject) {
+    return <ProjectView project={activeProject} onExit={() => { setActiveProject(null); loadProjects(); }} />;
+  }
+
+  return (
+    <div style={S.app}>
+      <Header title="ConstructFlow" sub="Select a project" />
+      {err && <div style={S.errorBanner}>{err}</div>}
+      <div style={S.grid}>
+        {projects === null && <Empty text="Loading projects…" />}
+        {projects && projects.length === 0 && <Empty text="No projects yet. Add one to start." />}
+        {projects && projects.map(p => (
+          <button key={p.id} onClick={() => setActiveProject(p)} style={S.card}>
+            <div style={{flex:1, textAlign:"left"}}>
+              <div style={S.cardTitle}>{p.name}</div>
+              <div style={S.cardSub}>Tap to open ledger</div>
+            </div>
+            <span style={{color:"#c4c7c1"}}>›</span>
+          </button>
+        ))}
+      </div>
+      <div style={{padding:"4px 16px 16px"}}>
+        <button onClick={() => setShowAddProject(true)} style={S.backupBtn}>+ Add Project</button>
+      </div>
+      {showAddProject && (
+        <SimpleModal title="Add Project" onClose={() => setShowAddProject(false)}>
+          <input autoFocus placeholder="Project name" value={newProjectName}
+            onChange={e=>setNewProjectName(e.target.value)} style={S.input} />
+          <button style={{...S.primaryBtn, background:"#1F4B43"}} onClick={async () => {
+            if (!newProjectName.trim()) return;
+            const p = await api("/projects", { method:"POST", body: JSON.stringify({ name:newProjectName.trim() }) });
+            setNewProjectName(""); setShowAddProject(false);
+            setProjects(prev => [p, ...(prev||[])]);
+          }}>Add</button>
+        </SimpleModal>
+      )}
+    </div>
+  );
+}
+
+// ---------- Inside a Project ----------
+function ProjectView({ project, onExit }) {
+  const [screen, setScreen] = useState({ view:"home" });
+  const [summary, setSummary] = useState(null);
+
+  const loadSummary = useCallback(async () => {
+    setSummary(await api(`/projects/${project.id}/summary`));
+  }, [project.id]);
+
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  if (screen.view === "home") {
+    return (
+      <div style={S.app}>
+        <Header title={project.name} sub="Project ledger" onBack={onExit} />
+        <div style={S.grid}>
+          {SECTIONS.map(s => {
+            const total = summary ? (summary.sectionTotals[s.id]||0) : 0;
+            const count = summary ? summary.heads.filter(h=>h.section===s.id).length : 0;
+            return (
+              <button key={s.id} onClick={() => setScreen({view:"list", sectionId:s.id})}
+                style={{...S.card, borderColor:s.color+"33"}}>
+                <div style={{...S.cardIcon, background:s.color+"1a", color:s.color}}>{s.label[0]}</div>
+                <div style={{flex:1, textAlign:"left"}}>
+                  <div style={S.cardTitle}>{s.label}</div>
+                  <div style={S.cardSub}>{s.sub}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:15, fontWeight:700, color:s.color}}>{fmt(Math.abs(total))}</div>
+                  <div style={{fontSize:10.5, color:"#9a9d99"}}>{count} account{count!==1?"s":""}</div>
+                </div>
+                <span style={{color:"#c4c7c1"}}>›</span>
+              </button>
+            );
+          })}
+          <button onClick={() => setScreen({view:"daybook"})} style={{...S.card, borderColor:"#6B5B9533"}}>
+            <div style={{...S.cardIcon, background:"#6B5B951a", color:"#6B5B95"}}>D</div>
+            <div style={{flex:1, textAlign:"left"}}>
+              <div style={S.cardTitle}>Day Book</div>
+              <div style={S.cardSub}>This project, date-wise</div>
+            </div>
+            <span style={{color:"#c4c7c1"}}>›</span>
+          </button>
+          <button onClick={() => setScreen({view:"expected"})} style={{...S.card, borderColor:"#5B7A5433"}}>
+            <div style={{...S.cardIcon, background:"#5B7A541a", color:"#5B7A54"}}>E</div>
+            <div style={{flex:1, textAlign:"left"}}>
+              <div style={S.cardTitle}>Expected Exp & Income</div>
+              <div style={S.cardSub}>Upcoming money in / out</div>
+            </div>
+            <span style={{color:"#c4c7c1"}}>›</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (screen.view === "expected") {
+    return <ExpectedView project={project} onBack={() => { setScreen({view:"home"}); loadSummary(); }} />;
+  }
+  if (screen.view === "daybook") {
+    return <DayBookView project={project} onBack={() => setScreen({view:"home"})} />;
+  }
+  if (screen.view === "list") {
+    return <HeadListView project={project} section={SECTIONS.find(s=>s.id===screen.sectionId)}
+      onBack={() => { setScreen({view:"home"}); loadSummary(); }}
+      onOpenHead={(head) => setScreen({view:"entity", sectionId:screen.sectionId, head})} />;
+  }
+  if (screen.view === "entity") {
+    const section = SECTIONS.find(s=>s.id===screen.sectionId);
+    return <HeadLedgerView project={project} section={section} head={screen.head}
+      onBack={() => setScreen({view:"list", sectionId:screen.sectionId})} />;
+  }
+  return null;
+}
+
+// ---------- Heads list (Owner/Labor/Material/Supplier names) ----------
+function HeadListView({ project, section, onBack, onOpenHead }) {
+  const [heads, setHeads] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [name, setName] = useState("");
+
+  const load = useCallback(async () => {
+    setHeads(await api(`/projects/${project.id}/heads/${section.id}`));
+  }, [project.id, section.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div style={S.app}>
+      <Header title={section.label} sub={section.sub} onBack={onBack} />
+      <div style={S.list}>
+        {heads === null && <Empty text="Loading…" />}
+        {heads && heads.length === 0 && <Empty text={`No ${section.entityNoun.toLowerCase()} added yet.`} />}
+        {heads && heads.map(h => (
+          <button key={h.id} onClick={() => onOpenHead(h)} style={S.entityRow}>
+            <div style={{...S.avatar, background:section.color+"1a", color:section.color}}>
+              {h.name.trim().charAt(0).toUpperCase()}
+            </div>
+            <div style={{flex:1, textAlign:"left"}}>
+              <div style={S.txnLabel}>{h.name}</div>
+              <div style={S.txnDate}>{h.entries.length} entr{h.entries.length===1?"y":"ies"}</div>
+            </div>
+            <div style={{fontWeight:700, color: h.balance>=0 ? section.color : "#2E6B4F"}}>{fmt(Math.abs(h.balance))}</div>
+            <span style={{color:"#c4c7c1"}}>›</span>
+          </button>
+        ))}
+      </div>
+      <button style={{...S.fab, background:section.color}} onClick={() => setShowAdd(true)}>+</button>
+      {showAdd && (
+        <SimpleModal title={`Add ${section.entityNoun}`} onClose={() => setShowAdd(false)}>
+          <input autoFocus placeholder={section.entityNoun} value={name} onChange={e=>setName(e.target.value)} style={S.input} />
+          <button style={{...S.primaryBtn, background:section.color}} onClick={async () => {
+            if (!name.trim()) return;
+            await api(`/projects/${project.id}/heads/${section.id}`, { method:"POST", body: JSON.stringify({ name }) });
+            setName(""); setShowAdd(false); load();
+          }}>Add</button>
+        </SimpleModal>
+      )}
+    </div>
+  );
+}
+
+// ---------- Single head's ledger ----------
+function HeadLedgerView({ project, section, head, onBack }) {
+  const [h, setH] = useState(head);
+  const [showAdd, setShowAdd] = useState(false);
+  const [suppliers, setSuppliers] = useState([]);
+
+  const reload = useCallback(async () => {
+    const list = await api(`/projects/${project.id}/heads/${section.id}`);
+    const found = list.find(x => x.id === head.id);
+    setH(found || head);
+  }, [project.id, section.id, head.id]);
+
+  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    if (section.id === "material") {
+      api(`/projects/${project.id}/heads/supplier`).then(setSuppliers);
+    }
+  }, [project.id, section.id]);
+
+  const bal = h.balance || 0;
+
+  return (
+    <div style={S.app}>
+      <Header title={h.name} sub={section.label} onBack={onBack} />
+      <div style={S.balanceStrip}>
+        <div>
+          <div style={S.balLabel}>{section.balanceLabel}</div>
+          <div style={{...S.balValue, color: bal>=0 ? section.color : "#2E6B4F"}}>
+            {fmt(Math.abs(bal))} {bal<0 ? "(advance)" : ""}
+          </div>
+        </div>
+        <button onClick={async () => {
+          if (!window.confirm(`Delete ${h.name} and all entries?`)) return;
+          await api(`/heads/${h.id}`, { method:"DELETE" });
+          onBack();
+        }} style={S.trashBtn}>🗑</button>
+      </div>
+      <div style={S.list}>
+        {h.entries.length === 0 && <Empty text="No entries yet." />}
+        {h.entries.map(tx => {
+          const mode = section.modes.find(m=>m.key===tx.mode);
+          const isPositive = ["due","wage","used","bill"].includes(tx.mode);
+          return (
+            <div key={tx.id} style={S.txnRow}>
+              <div style={{flex:1}}>
+                <div style={S.txnLabel}>{mode ? mode.label : tx.mode}</div>
+                <div style={S.txnDate}>
+                  {tx.entry_date && tx.entry_date.slice(0,10)}
+                  {tx.note ? ` · ${tx.note}` : ""}
+                  {tx.source === "cash" ? " · via Cash" : ""}
+                </div>
+              </div>
+              <div style={{fontWeight:700, color: isPositive ? section.color : "#2E6B4F"}}>
+                {isPositive ? "+" : "−"}{fmt(tx.amount)}
+              </div>
+              <button onClick={async () => { await api(`/entries/${tx.id}`, {method:"DELETE"}); reload(); }} style={S.trashBtn}>🗑</button>
+            </div>
+          );
+        })}
+      </div>
+      <button style={{...S.fab, background:section.color}} onClick={() => setShowAdd(true)}>+</button>
+      {showAdd && (
+        <AddEntryModal section={section} suppliers={suppliers} onClose={() => setShowAdd(false)}
+          onSave={async (txn) => {
+            await api(`/heads/${h.id}/entries`, { method:"POST", body: JSON.stringify(txn) });
+            setShowAdd(false); reload();
+          }} />
+      )}
+    </div>
+  );
+}
+
+function AddEntryModal({ section, suppliers=[], onClose, onSave }) {
+  const [mode, setMode] = useState(section.modes[0].key);
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today());
+  const [note, setNote] = useState("");
+  const [source, setSource] = useState("cash");
+  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || "");
+  const showSource = section.id === "material" && mode === "used";
+
+  return (
+    <SimpleModal title="Add Entry" onClose={onClose}>
+      <div style={S.segment}>
+        {section.modes.map(m => (
+          <button key={m.key} onClick={() => setMode(m.key)}
+            style={{...S.segmentBtn, background: mode===m.key?section.color:"transparent", color: mode===m.key?"#fff":"#5c6058"}}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {showSource && (
+        <>
+          <div style={S.segment}>
+            <button onClick={()=>setSource("cash")} style={{...S.segmentBtn, background: source==="cash"?section.color:"transparent", color: source==="cash"?"#fff":"#5c6058"}}>Cash</button>
+            <button onClick={()=>setSource("supplier")} style={{...S.segmentBtn, background: source==="supplier"?section.color:"transparent", color: source==="supplier"?"#fff":"#5c6058"}}>On Supplier</button>
+          </div>
+          {source === "supplier" && (
+            suppliers.length === 0
+              ? <div style={{fontSize:12, color:"#a3a69a"}}>No suppliers yet. Add one under Supplier Payable first.</div>
+              : <select value={supplierId} onChange={e=>setSupplierId(e.target.value)} style={S.input}>
+                  {suppliers.map(sp => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+                </select>
+          )}
+        </>
+      )}
+      <input type="number" placeholder="Amount" value={amount} onChange={e=>setAmount(e.target.value)} style={S.input} inputMode="decimal" />
+      <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={S.input} />
+      <input placeholder="Note (optional)" value={note} onChange={e=>setNote(e.target.value)} style={S.input} />
+      <button style={{...S.primaryBtn, background:section.color}} onClick={() => {
+        if (!amount || Number(amount) <= 0) return;
+        if (showSource && source==="supplier" && !supplierId) return;
+        onSave({
+          mode, amount:Number(amount), entry_date:date, note:note.trim(),
+          ...(showSource ? { source, supplier_head_id: source==="supplier" ? supplierId : null } : {})
+        });
+      }}>Save Entry</button>
+    </SimpleModal>
+  );
+}
+
+// ---------- Expected income/expense ----------
+function ExpectedView({ project, onBack }) {
+  const [items, setItems] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+
+  const load = useCallback(async () => {
+    const s = await api(`/projects/${project.id}/summary`);
+    setItems(s.expected);
+  }, [project.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const inTotal = items ? items.filter(i=>i.type==="income").reduce((s,i)=>s+Number(i.amount),0) : 0;
+  const outTotal = items ? items.filter(i=>i.type==="expense").reduce((s,i)=>s+Number(i.amount),0) : 0;
+
+  return (
+    <div style={S.app}>
+      <Header title="Expected Exp & Income" sub="Planned, not yet happened" onBack={onBack} />
+      <div style={S.balanceStrip}>
+        <div><div style={S.balLabel}>Expected Income</div><div style={{...S.balValue, color:"#2E6B4F"}}>{fmt(inTotal)}</div></div>
+        <div style={{width:1, background:"#e4e2da"}} />
+        <div><div style={S.balLabel}>Expected Expense</div><div style={{...S.balValue, color:"#A6462A"}}>{fmt(outTotal)}</div></div>
+      </div>
+      <div style={S.list}>
+        {items === null && <Empty text="Loading…" />}
+        {items && items.length === 0 && <Empty text="No expected entries yet." />}
+        {items && items.map(it => (
+          <div key={it.id} style={S.txnRow}>
+            <div style={{flex:1}}>
+              <div style={S.txnLabel}>{it.note || (it.type==="income"?"Expected income":"Expected expense")}</div>
+              <div style={S.txnDate}>{it.entry_date && it.entry_date.slice(0,10)}</div>
+            </div>
+            <div style={{fontWeight:700, color: it.type==="income"?"#2E6B4F":"#A6462A"}}>
+              {it.type==="income"?"+":"−"}{fmt(it.amount)}
+            </div>
+            <button onClick={async ()=>{ await api(`/expected/${it.id}`, {method:"DELETE"}); load(); }} style={S.trashBtn}>🗑</button>
+          </div>
+        ))}
+      </div>
+      <button style={S.fab} onClick={() => setShowAdd(true)}>+</button>
+      {showAdd && (
+        <SimpleModal title="Add Expected Entry" onClose={()=>setShowAdd(false)}>
+          <ExpectedForm onSave={async (entry) => {
+            await api(`/projects/${project.id}/expected`, { method:"POST", body: JSON.stringify(entry) });
+            setShowAdd(false); load();
+          }} />
+        </SimpleModal>
+      )}
+    </div>
+  );
+}
+
+function ExpectedForm({ onSave }) {
+  const [type, setType] = useState("income");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today());
+  const [note, setNote] = useState("");
+  return (
+    <>
+      <div style={S.segment}>
+        <button onClick={()=>setType("income")} style={{...S.segmentBtn, background: type==="income"?"#5B7A54":"transparent", color: type==="income"?"#fff":"#5c6058"}}>Expected Income</button>
+        <button onClick={()=>setType("expense")} style={{...S.segmentBtn, background: type==="expense"?"#A6462A":"transparent", color: type==="expense"?"#fff":"#5c6058"}}>Expected Expense</button>
+      </div>
+      <input type="number" placeholder="Amount" value={amount} onChange={e=>setAmount(e.target.value)} style={S.input} inputMode="decimal" />
+      <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={S.input} />
+      <input placeholder="Note" value={note} onChange={e=>setNote(e.target.value)} style={S.input} />
+      <button style={{...S.primaryBtn, background: type==="income"?"#5B7A54":"#A6462A"}} onClick={() => {
+        if (!amount || Number(amount)<=0) return;
+        onSave({ type, amount:Number(amount), entry_date:date, note:note.trim() });
+      }}>Save</button>
+    </>
+  );
+}
+
+// ---------- Day book ----------
+function DayBookView({ project, onBack }) {
+  const [rows, setRows] = useState(null);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [sectionFilter, setSectionFilter] = useState("all");
+
+  useEffect(() => { api(`/projects/${project.id}/daybook`).then(setRows); }, [project.id]);
+
+  let filtered = rows || [];
+  if (sectionFilter !== "all") filtered = filtered.filter(r => r.section === sectionFilter);
+  if (from) filtered = filtered.filter(r => r.entry_date.slice(0,10) >= from);
+  if (to) filtered = filtered.filter(r => r.entry_date.slice(0,10) <= to);
+
+  const totalIn = filtered.filter(r => ["received","paid"].includes(r.mode)).reduce((s,r)=>s+Number(r.amount),0);
+  const totalOut = filtered.filter(r => ["due","wage","used","bill"].includes(r.mode)).reduce((s,r)=>s+Number(r.amount),0);
+
+  return (
+    <div style={S.app}>
+      <Header title="Day Book" sub="This project, date-wise" onBack={onBack} />
+      <div style={{padding:"0 16px 12px", display:"flex", gap:8}}>
+        <input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...S.input, flex:1}} />
+        <input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...S.input, flex:1}} />
+      </div>
+      <div style={{padding:"0 16px 12px", display:"flex", gap:6, overflowX:"auto"}}>
+        <Chip label="All" active={sectionFilter==="all"} onClick={()=>setSectionFilter("all")} />
+        {SECTIONS.map(s => <Chip key={s.id} label={s.label} active={sectionFilter===s.id} onClick={()=>setSectionFilter(s.id)} color={s.color} />)}
+      </div>
+      <div style={S.balanceStrip}>
+        <div><div style={S.balLabel}>Total Received / Paid Out</div><div style={{...S.balValue, color:"#2E6B4F"}}>{fmt(totalIn)}</div></div>
+        <div style={{width:1, background:"#e4e2da"}} />
+        <div><div style={S.balLabel}>Total Due / Purchases</div><div style={{...S.balValue, color:"#A6462A"}}>{fmt(totalOut)}</div></div>
+      </div>
+      <div style={S.list}>
+        {rows === null && <Empty text="Loading…" />}
+        {rows && filtered.length === 0 && <Empty text="No entries for this filter." />}
+        {filtered.map(r => {
+          const sec = SECTIONS.find(s=>s.id===r.section);
+          const isPositive = ["due","wage","used","bill"].includes(r.mode);
+          const mode = sec.modes.find(m=>m.key===r.mode);
+          return (
+            <div key={r.id} style={S.txnRow}>
+              <div style={{flex:1}}>
+                <div style={S.txnLabel}>{r.head_name} — {mode?mode.label:r.mode}</div>
+                <div style={S.txnDate}>
+                  {r.entry_date.slice(0,10)} · <span style={{color:sec.color, fontWeight:600}}>{sec.label}</span>
+                  {r.note ? ` · ${r.note}` : ""}
+                </div>
+              </div>
+              <div style={{fontWeight:700, color: isPositive?"#A6462A":"#2E6B4F"}}>
+                {isPositive?"+":"−"}{fmt(r.amount)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Chip({ label, active, onClick, color="#1F4B43" }) {
+  return (
+    <button onClick={onClick} style={{
+      border:"1px solid "+(active?color:"#e4e2da"), background: active?color:"#fff", color: active?"#fff":"#5c6058",
+      borderRadius:20, padding:"6px 14px", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0
+    }}>{label}</button>
+  );
+}
+
+// ---------- styles ----------
+const S = {
+  app: { minHeight:"100vh", display:"flex", flexDirection:"column", paddingBottom:90, position:"relative" },
+  header: { display:"flex", alignItems:"center", gap:12, padding:"22px 20px 16px" },
+  backBtn: { width:34, height:34, borderRadius:10, border:"1px solid #e4e2da", background:"#fff", cursor:"pointer", flexShrink:0 },
+  headerTitle: { fontSize:20, fontWeight:800, letterSpacing:"-0.02em" },
+  headerSub: { fontSize:12.5, color:"#9a9d92", marginTop:2 },
+  grid: { display:"flex", flexDirection:"column", gap:10, padding:"4px 16px 16px" },
+  card: { display:"flex", alignItems:"center", gap:12, background:"#fff", border:"1px solid #ece9df", borderRadius:16, padding:"14px", cursor:"pointer", textAlign:"left" },
+  cardIcon: { width:40, height:40, borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontWeight:700 },
+  cardTitle: { fontSize:14.5, fontWeight:700 },
+  cardSub: { fontSize:11.5, color:"#9a9d92", marginTop:1 },
+  list: { display:"flex", flexDirection:"column", gap:8, padding:"6px 16px 16px" },
+  entityRow: { display:"flex", alignItems:"center", gap:12, background:"#fff", border:"1px solid #ece9df", borderRadius:14, padding:"12px 14px", cursor:"pointer", width:"100%" },
+  avatar: { width:34, height:34, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 },
+  txnRow: { display:"flex", alignItems:"center", gap:10, background:"#fff", border:"1px solid #ece9df", borderRadius:14, padding:"12px 14px" },
+  txnLabel: { fontSize:13.5, fontWeight:600, color:"#33362c" },
+  txnDate: { fontSize:11.5, color:"#a3a69a", marginTop:2 },
+  trashBtn: { width:28, height:28, borderRadius:8, border:"none", background:"transparent", cursor:"pointer", flexShrink:0 },
+  balanceStrip: { display:"flex", alignItems:"center", justifyContent:"space-between", background:"#fff", border:"1px solid #ece9df", borderRadius:16, padding:"16px 20px", margin:"0 16px 14px" },
+  balLabel: { fontSize:11.5, color:"#9a9d92", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.03em" },
+  balValue: { fontSize:22, fontWeight:800, marginTop:4 },
+  empty: { textAlign:"center", color:"#a3a69a", fontSize:13, padding:"40px 20px" },
+  errorBanner: { background:"#F6DEDA", color:"#A6462A", fontSize:12, fontWeight:600, textAlign:"center", padding:"8px" },
+  fab: { position:"fixed", bottom:26, right:24, width:54, height:54, borderRadius:"50%", border:"none", background:"#1F4B43", color:"#fff", fontSize:24, cursor:"pointer", boxShadow:"0 6px 18px rgba(31,75,67,0.35)" },
+  overlay: { position:"fixed", inset:0, background:"rgba(20,22,17,0.4)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:50 },
+  modal: { background:"#fff", borderRadius:"20px 20px 0 0", padding:"18px 18px 24px", width:"100%", maxWidth:480 },
+  modalHead: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 },
+  modalTitle: { fontSize:16, fontWeight:700 },
+  closeBtn: { border:"none", background:"#f4f2ea", width:30, height:30, borderRadius:9, cursor:"pointer" },
+  input: { border:"1px solid #e4e2da", borderRadius:12, padding:"12px 14px", fontSize:14, outline:"none", background:"#FBFAF6", color:"#26281f", width:"100%" },
+  segment: { display:"flex", gap:6, background:"#F6F4EE", padding:4, borderRadius:12 },
+  segmentBtn: { flex:1, border:"none", borderRadius:9, padding:"9px 8px", fontSize:12.5, fontWeight:600, cursor:"pointer" },
+  primaryBtn: { border:"none", borderRadius:12, padding:"13px", fontSize:14, fontWeight:700, color:"#fff", cursor:"pointer", marginTop:4 },
+  backupBtn: { width:"100%", border:"1px solid #ece9df", background:"#fff", borderRadius:12, padding:"12px", fontSize:13, fontWeight:700, color:"#5c6058", cursor:"pointer" },
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
