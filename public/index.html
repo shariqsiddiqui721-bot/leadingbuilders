@@ -6,7 +6,7 @@
 <title>ConstructFlow</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin:0; background:#F6F4EE; font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; color:#26281f; }
@@ -554,7 +554,7 @@ root.render(<App />);
 </script>
 <script>
   var src = document.getElementById("cf-app-source-9f31").textContent;
-  var out = Babel.transform(src, { presets: ["react"] }).code;
+  var out = Babel.transform(src, { presets: [["react", { runtime: "classic" }]] }).code;
   (0, eval)(out);
 </script>
 </body>
