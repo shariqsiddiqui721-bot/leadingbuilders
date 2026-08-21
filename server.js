@@ -9,9 +9,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+const isInternalOrLocal =
+  process.env.DATABASE_URL &&
+  (process.env.DATABASE_URL.includes("localhost") ||
+    process.env.DATABASE_URL.includes(".railway.internal"));
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+  ssl: isInternalOrLocal ? false : { rejectUnauthorized: false },
 });
 
 // sign of each mode per section: +1 increases the balance owed/due, -1 reduces it
