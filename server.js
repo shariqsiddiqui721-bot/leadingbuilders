@@ -73,7 +73,51 @@ app.get("/api/projects/:id/summary", async (req, res) => {
   const expectedIncome = expected.filter((e) => e.type === "income").reduce((s, e) => s + Number(e.amount), 0);
   const expectedExpense = expected.filter((e) => e.type === "expense").reduce((s, e) => s + Number(e.amount), 0);
 
-  res.json({ heads, sectionTotals, expected, expectedIncome, expectedExpense });
+  // ---- consolidated report: expenses, revenue, received ----
+  let totalLaborWage = 0, totalLaborPaid = 0;
+  let totalMaterialPurchase = 0, totalMaterialPaid = 0;
+  let totalOwnerDue = 0, totalOwnerReceived = 0;
+  let totalSupplierBill = 0, totalSupplierPaid = 0;
+
+  for (const h of heads) {
+    for (const e of h.entries) {
+      const amt = Number(e.amount);
+      if (h.section === "labor") {
+        if (e.mode === "wage") totalLaborWage += amt;
+        if (e.mode === "paid") totalLaborPaid += amt;
+      } else if (h.section === "material") {
+        if (e.mode === "used") totalMaterialPurchase += amt;
+        if (e.mode === "paid") totalMaterialPaid += amt;
+      } else if (h.section === "owner") {
+        if (e.mode === "due") totalOwnerDue += amt;
+        if (e.mode === "received") totalOwnerReceived += amt;
+      } else if (h.section === "supplier") {
+        if (e.mode === "bill") totalSupplierBill += amt;
+        if (e.mode === "paid") totalSupplierPaid += amt;
+      }
+    }
+  }
+
+  const totalExpenses = totalLaborWage + totalMaterialPurchase;
+  const revenue = totalOwnerDue; // total value billed/due to owner
+  const report = {
+    totalLaborWage,
+    totalLaborPaid,
+    totalLaborOutstanding: totalLaborWage - totalLaborPaid,
+    totalMaterialPurchase,
+    totalMaterialPaid,
+    totalMaterialOutstanding: totalMaterialPurchase - totalMaterialPaid,
+    totalSupplierBill,
+    totalSupplierPaid,
+    totalSupplierOutstanding: totalSupplierBill - totalSupplierPaid,
+    totalExpenses,
+    revenue,
+    totalReceivedFromOwner: totalOwnerReceived,
+    outstandingReceivable: revenue - totalOwnerReceived,
+    netProfit: revenue - totalExpenses,
+  };
+
+  res.json({ heads, sectionTotals, expected, expectedIncome, expectedExpense, report });
 });
 
 // ---------- Heads (Owner/Labor/Material/Supplier entities) ----------
