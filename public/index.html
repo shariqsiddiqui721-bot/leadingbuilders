@@ -162,6 +162,14 @@ function ProjectView({ project, onExit }) {
               </button>
             );
           })}
+          <button onClick={() => setScreen({view:"report"})} style={{...S.card, borderColor:"#1F4B4333"}}>
+            <div style={{...S.cardIcon, background:"#1F4B431a", color:"#1F4B43"}}>R</div>
+            <div style={{flex:1, textAlign:"left"}}>
+              <div style={S.cardTitle}>Report</div>
+              <div style={S.cardSub}>Total expenses, revenue & received</div>
+            </div>
+            <span style={{color:"#c4c7c1"}}>›</span>
+          </button>
           <button onClick={() => setScreen({view:"daybook"})} style={{...S.card, borderColor:"#6B5B9533"}}>
             <div style={{...S.cardIcon, background:"#6B5B951a", color:"#6B5B95"}}>D</div>
             <div style={{flex:1, textAlign:"left"}}>
@@ -188,6 +196,9 @@ function ProjectView({ project, onExit }) {
   }
   if (screen.view === "daybook") {
     return <DayBookView project={project} onBack={() => setScreen({view:"home"})} />;
+  }
+  if (screen.view === "report") {
+    return <ReportView project={project} onBack={() => setScreen({view:"home"})} />;
   }
   if (screen.view === "list") {
     return <HeadListView project={project} section={SECTIONS.find(s=>s.id===screen.sectionId)}
@@ -498,6 +509,77 @@ function DayBookView({ project, onBack }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function ReportView({ project, onBack }) {
+  const [report, setReport] = useState(null);
+
+  useEffect(() => {
+    api(`/projects/${project.id}/summary`).then(s => setReport(s.report));
+  }, [project.id]);
+
+  if (!report) {
+    return (
+      <div style={S.app}>
+        <Header title="Report" sub="Expenses, revenue & received" onBack={onBack} />
+        <Empty text="Loading…" />
+      </div>
+    );
+  }
+
+  const Row = ({ label, value, color, big }) => (
+    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #ece9df"}}>
+      <div style={{fontSize: big?13.5:12.5, fontWeight: big?700:500, color: big?"#33362c":"#7d8078"}}>{label}</div>
+      <div style={{fontSize: big?15:13.5, fontWeight:700, color: color||"#33362c"}}>{fmt(value)}</div>
+    </div>
+  );
+
+  return (
+    <div style={S.app}>
+      <Header title="Report" sub="Expenses, revenue & received" onBack={onBack} />
+
+      <div style={S.balanceStrip}>
+        <div><div style={S.balLabel}>Total Expenses</div><div style={{...S.balValue, color:"#A6462A"}}>{fmt(report.totalExpenses)}</div></div>
+        <div style={{width:1, background:"#e4e2da"}} />
+        <div><div style={S.balLabel}>Revenue</div><div style={{...S.balValue, color:"#2E6B4F"}}>{fmt(report.revenue)}</div></div>
+      </div>
+      <div style={S.balanceStrip}>
+        <div><div style={S.balLabel}>Received from Owner</div><div style={{...S.balValue, color:"#1F4B43"}}>{fmt(report.totalReceivedFromOwner)}</div></div>
+        <div style={{width:1, background:"#e4e2da"}} />
+        <div><div style={S.balLabel}>Net Profit</div><div style={{...S.balValue, color: report.netProfit>=0 ? "#2E6B4F" : "#A6462A"}}>{fmt(report.netProfit)}</div></div>
+      </div>
+
+      <div style={{padding:"0 16px 24px"}}>
+        <div style={{background:"#fff", border:"1px solid #ece9df", borderRadius:16, padding:"6px 16px", marginBottom:14}}>
+          <div style={{fontSize:11.5, fontWeight:700, color:"#B5502A", textTransform:"uppercase", letterSpacing:"0.03em", padding:"10px 0 2px"}}>Labor</div>
+          <Row label="Total Wage (Paid + Unpaid)" value={report.totalLaborWage} big />
+          <Row label="Paid to Labor" value={report.totalLaborPaid} color="#2E6B4F" />
+          <Row label="Outstanding (Unpaid)" value={report.totalLaborOutstanding} color="#A6462A" />
+        </div>
+
+        <div style={{background:"#fff", border:"1px solid #ece9df", borderRadius:16, padding:"6px 16px", marginBottom:14}}>
+          <div style={{fontSize:11.5, fontWeight:700, color:"#8A6D1D", textTransform:"uppercase", letterSpacing:"0.03em", padding:"10px 0 2px"}}>Material</div>
+          <Row label="Total Purchased" value={report.totalMaterialPurchase} big />
+          <Row label="Paid" value={report.totalMaterialPaid} color="#2E6B4F" />
+          <Row label="Outstanding (Unpaid)" value={report.totalMaterialOutstanding} color="#A6462A" />
+        </div>
+
+        <div style={{background:"#fff", border:"1px solid #ece9df", borderRadius:16, padding:"6px 16px", marginBottom:14}}>
+          <div style={{fontSize:11.5, fontWeight:700, color:"#3B4A6B", textTransform:"uppercase", letterSpacing:"0.03em", padding:"10px 0 2px"}}>Supplier</div>
+          <Row label="Total Billed" value={report.totalSupplierBill} big />
+          <Row label="Paid" value={report.totalSupplierPaid} color="#2E6B4F" />
+          <Row label="Outstanding Payable" value={report.totalSupplierOutstanding} color="#A6462A" />
+        </div>
+
+        <div style={{background:"#fff", border:"1px solid #ece9df", borderRadius:16, padding:"6px 16px"}}>
+          <div style={{fontSize:11.5, fontWeight:700, color:"#1F4B43", textTransform:"uppercase", letterSpacing:"0.03em", padding:"10px 0 2px"}}>Owner</div>
+          <Row label="Total Revenue (Billed)" value={report.revenue} big />
+          <Row label="Received" value={report.totalReceivedFromOwner} color="#2E6B4F" />
+          <Row label="Outstanding Receivable" value={report.outstandingReceivable} color="#A6462A" />
+        </div>
       </div>
     </div>
   );
